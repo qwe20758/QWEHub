@@ -2456,7 +2456,7 @@ local StarterGui = game:GetService("StarterGui")
 
 -- 文件路径配置
 local CONFIG_PATH = "autoexec/QELua_ChaseConfig.txt"
-local AUTOLOAD_PATH = "Autoexec/QELua_AutoLoad.lua"
+local AUTOLOAD_PATH = "Autoexecute/QELua_AutoLoad.lua"
 local SCRIPT_URL = "https://raw.githubusercontent.com/qwe20758/QWEHub/refs/heads/main/QELuaV3.lua"
 
 local hatePlayersList = {}
