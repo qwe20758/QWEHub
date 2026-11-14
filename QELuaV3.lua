@@ -2450,13 +2450,13 @@ aboutSection:Label("版本：v0.5.4.3")
 aboutSection:Label("作者：匿名")
 
 -- ============================================================
--- 核心：跨服追杀 & 复仇 & 文件持久化
+-- 核心：跨服追杀 & 复仇 & 文件持久化 (Delta 执行器绝对路径版)
 -- ============================================================
 local StarterGui = game:GetService("StarterGui")
 
--- 文件路径配置
-local CONFIG_PATH = "autoexec/QELua_ChaseConfig.txt"
-local AUTOLOAD_PATH = "Autoexecute/QELua_AutoLoad.lua"
+-- 针对 Delta 执行器的绝对路径配置
+local CONFIG_PATH = "/storage/emulated/0/Delta/Autoexecute/QELua_ChaseConfig.txt"
+local AUTOLOAD_PATH = "/storage/emulated/0/Delta/Autoexecute/QELua_AutoLoad.lua"
 local SCRIPT_URL = "https://raw.githubusercontent.com/qwe20758/QWEHub/refs/heads/main/QELuaV3.lua"
 
 local hatePlayersList = {}
@@ -2490,6 +2490,8 @@ function saveChaseTargetToFile(name)
             writefile(AUTOLOAD_PATH, loaderContent)
             print("[跨服追杀] 已写入 autoexec 和 配置文件")
         end)
+    else
+        print("[跨服追杀] 执行器不支持 writefile")
     end
 end
 
@@ -2631,12 +2633,10 @@ function startCrossServerChase(targetName)
             local targetPlayer = Players:FindFirstChild(targetName)
             
             if targetPlayer then
-                -- 玩家在当前服务器，触发自动反击
                 print("[跨服追杀] 目标在当前服务器，触发自动反击！")
                 executeAutoRevenge(targetPlayer)
                 break
             else
-                -- 发送加入请求，每 3 秒一次
                 print("[跨服追杀] 目标不在当前服，正在尝试加入...")
                 local userId = nil
                 pcall(function() userId = Players:GetUserIdFromNameAsync(targetName) end)
@@ -2658,7 +2658,6 @@ if killMessageEvent then
     killMessageEvent.OnClientEvent:Connect(function(killerName, weaponName, distance)
         if killerName == LocalPlayer.Name then return end
         
-        -- 1. 更新仇恨列表
         if not table.find(hatePlayersList, killerName) then
             table.insert(hatePlayersList, killerName)
             if hateDropdown then
@@ -2668,13 +2667,11 @@ if killMessageEvent then
             end
         end
         
-        -- 2. 如果开启跨服追杀且正是目标
         if Flags.crossServerChase and currentChaseTarget == killerName then
             executeAutoRevenge(Players:FindFirstChild(killerName))
             return
         end
         
-        -- 3. 普通自动反击
         if Flags.autoRevenge then
             local killer = Players:FindFirstChild(killerName)
             if killer then executeAutoRevenge(killer) end
@@ -2683,64 +2680,46 @@ if killMessageEvent then
 end
 
 -- ============================================================
--- 启动时读取配置并弹窗
+-- 启动时读取配置 & 原生通知（默认继续，可点按钮停止）
 -- ============================================================
 task.spawn(function()
-    task.wait(2) -- 等待游戏和UI加载
+    task.wait(2) -- 等待游戏和UI加载完毕
+    
     if isfile and isfile(CONFIG_PATH) then
         local savedTarget = readfile(CONFIG_PATH)
         if savedTarget and savedTarget ~= "" then
             
-            local gui = Instance.new("ScreenGui")
-            gui.Name = "QELua_ChasePrompt"
-            gui.ResetOnSpawn = false
-            gui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+            -- 1. 默认行为：自动填入目标并开启跨服追杀
+            chaseTargetName = savedTarget
+            Flags.crossServerChase = true
+            startCrossServerChase(savedTarget)
             
-            local frame = Instance.new("Frame")
-            frame.Size = UDim2.new(0, 320, 0, 140)
-            frame.Position = UDim2.new(0.5, -160, 0.5, -70)
-            frame.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
-            frame.Parent = gui
-            Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
+            -- 2. 创建一个 BindableEvent 用于接收通知按钮点击
+            local notifyBindable = Instance.new("BindableEvent")
             
-            local label = Instance.new("TextLabel")
-            label.Size = UDim2.new(1, -20, 0, 60)
-            label.Position = UDim2.new(0, 10, 0, 10)
-            label.BackgroundTransparency = 1
-            label.Text = "检测到正在进行跨服追杀：\n" .. savedTarget .. "\n是否停止追杀该玩家？"
-            label.TextColor3 = Color3.fromRGB(255, 255, 255)
-            label.TextSize = 14
-            label.Parent = frame
-            
-            local btnStop = Instance.new("TextButton")
-            btnStop.Size = UDim2.new(0, 130, 0, 32)
-            btnStop.Position = UDim2.new(0, 15, 1, -45)
-            btnStop.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
-            btnStop.Text = "停止并删除配置"
-            btnStop.TextColor3 = Color3.fromRGB(255, 255, 255)
-            btnStop.Parent = frame
-            Instance.new("UICorner", btnStop).CornerRadius = UDim.new(0, 6)
-            
-            local btnContinue = Instance.new("TextButton")
-            btnContinue.Size = UDim2.new(0, 130, 0, 32)
-            btnContinue.Position = UDim2.new(0, 160, 1, -45)
-            btnContinue.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
-            btnContinue.Text = "继续追杀"
-            btnContinue.TextColor3 = Color3.fromRGB(255, 255, 255)
-            btnContinue.Parent = frame
-            Instance.new("UICorner", btnContinue).CornerRadius = UDim.new(0, 6)
-            
-            btnStop.MouseButton1Click:Connect(function()
+            -- 监听按钮点击
+            notifyBindable.Event:Connect(function()
+                print("[跨服追杀] 用户点击了停止按钮，取消追杀。")
                 clearChaseTargetFile()
                 Flags.crossServerChase = false
-                gui:Destroy()
+                -- 如果正在追击/复仇，立刻中断
+                if stopRevenge then stopRevenge("用户取消追杀") end
             end)
             
-            btnContinue.MouseButton1Click:Connect(function()
-                chaseTargetName = savedTarget
-                Flags.crossServerChase = true
-                startCrossServerChase(savedTarget)
-                gui:Destroy()
+            -- 3. 发送原生通知
+            pcall(function()
+                StarterGui:SetCore("SendNotification", {
+                    Title = "跨服追杀 (QE)",
+                    Text = "正在自动追杀目标: " .. savedTarget .. "。如需停止，请点击下方按钮。",
+                    Duration = 30, -- 显示 30 秒
+                    Callback = notifyBindable,
+                    Button1 = "关闭并停止",
+                })
+            end)
+            
+            -- 延迟销毁 BindableEvent 防止内存泄漏 (稍微比通知长一点)
+            task.delay(35, function()
+                if notifyBindable then notifyBindable:Destroy() end
             end)
         end
     end
