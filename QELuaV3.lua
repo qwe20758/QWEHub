@@ -141,210 +141,6 @@ task.spawn(function()
 end)
 
 -- ============================================================
--- 跨服追杀 & 复仇 & 文件持久化 核心模块
--- ============================================================
-StarterGui = game:GetService("StarterGui")
-local CONFIG_FILE = "autoexec/QELua_ChaseConfig.txt"
-local hatePlayersList = {}
-local currentChaseTarget = nil
-local isChaseRunning = false
-
--- 记录并刷新仇恨列表
-function addHatePlayer(playerName)
-    if table.find(hatePlayersList, playerName) then return end
-    table.insert(hatePlayersList, playerName)
-    if hateDropdown then
-        local listCopy = {unpack(hatePlayersList)}
-        table.insert(listCopy, 1, "无")
-        hateDropdown:SetOptions(listCopy)
-    end
-end
-
--- ============================================================
--- 文件持久化 (防执行器报错封装)
--- ============================================================
-function saveChaseTargetToFile(name)
-    if writefile then
-        pcall(function()
-            writefile(CONFIG_FILE, name)
-            -- 同时尝试将自己写入 autoexec 实现自启动
-            local currentScript = debug.info(1, "s") -- 获取当前脚本源
-            if currentScript and currentScript:sub(1, 4) ~= "http" then
-                writefile("autoexec/QELua_Chase_AutoLoad.lua", currentScript)
-            else
-                -- 如果获取不到源码，写入一个带URL的引导(根据你的实际URL改)
-                -- writefile("autoexec/QELua_Chase_AutoLoad.lua", "loadstring(game:HttpGet('你的脚本URL'))()")
-            end
-        end)
-    end
-end
-
-function clearChaseTargetFile()
-    if delfile and isfile and isfile(CONFIG_FILE) then
-        pcall(delfile, CONFIG_FILE)
-    end
-end
-
--- 启动时读取配置并弹窗
-function loadChaseConfigOnStart()
-    if isfile and isfile(CONFIG_FILE) then
-        local savedTarget = readfile(CONFIG_FILE)
-        if savedTarget and savedTarget ~= "" then
-            -- 创建一个简易弹窗
-            local gui = Instance.new("ScreenGui")
-            gui.Name = "ChasePrompt"
-            gui.Parent = LocalPlayer:WaitForChild("PlayerGui")
-            
-            local frame = Instance.new("Frame")
-            frame.Size = UDim2.new(0, 300, 0, 120)
-            frame.Position = UDim2.new(0.5, -150, 0.5, -60)
-            frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-            frame.Parent = gui
-            Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
-            
-            local label = Instance.new("TextLabel")
-            label.Size = UDim2.new(1, 0, 0, 50)
-            label.BackgroundTransparency = 1
-            label.Text = "检测到正在进行跨服追杀：\n" .. savedTarget .. "\n是否停止追杀？"
-            label.TextColor3 = Color3.fromRGB(255, 255, 255)
-            label.TextSize = 14
-            label.Parent = frame
-            
-            local btnStop = Instance.new("TextButton")
-            btnStop.Size = UDim2.new(0, 120, 0, 30)
-            btnStop.Position = UDim2.new(0, 20, 1, -40)
-            btnStop.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
-            btnStop.Text = "停止追杀"
-            btnStop.TextColor3 = Color3.fromRGB(255, 255, 255)
-            btnStop.Parent = frame
-            
-            local btnContinue = Instance.new("TextButton")
-            btnContinue.Size = UDim2.new(0, 120, 0, 30)
-            btnContinue.Position = UDim2.new(0, 160, 1, -40)
-            btnContinue.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
-            btnContinue.Text = "继续追杀"
-            btnContinue.TextColor3 = Color3.fromRGB(255, 255, 255)
-            btnContinue.Parent = frame
-            
-            btnStop.MouseButton1Click:Connect(function()
-                clearChaseTargetFile()
-                gui:Destroy()
-            end)
-            
-            btnContinue.MouseButton1Click:Connect(function()
-                -- 自动填入并开启
-                chaseInput:SetText(savedTarget) -- 假设UI库支持SetText，若不支持则用变量
-                chaseTargetName = savedTarget
-                Flags.crossServerChase = true
-                startCrossServerChase(savedTarget)
-                gui:Destroy()
-            end)
-        end
-    end
-end
-
--- ============================================================
--- 跨服追杀核心逻辑
--- ============================================================
-local function executeAutoRevenge(targetPlayer)
-    -- 复用之前的自动反击逻辑
-    if isRevengeActive then stopRevenge("切换新目标") task.wait(0.1) end
-    
-    originalTpWalk = Flags.tpEnabled
-    originalHitMOD = Flags.hitMOD
-    originalAutoStomp = Flags.autoStomp
-    originalWeaponType = Flags.weaponType
-    originalAutoEquip = Flags.autoEquip
-    
-    local cam = workspace.CurrentCamera
-    if cam then
-        savedCameraSubject = cam.CameraSubject
-        savedCameraType = cam.CameraType
-    end
-    
-    revengeTarget = targetPlayer
-    revengeKillCount = 0
-    isTargetDead = false
-    isRevengeActive = true
-    
-    Flags.hitMOD = "meleemegapunch" 
-    Flags.killAura = true
-    Flags.autoStomp = true
-    Flags.tpEnabled = true
-    Flags.weaponType = "Fists"
-    Flags.autoEquip = true
-    
-    task.spawn(function()
-        while isRevengeActive and revengeTarget do
-            task.wait(0.05)
-            if not Flags.autoRevenge and not Flags.crossServerChase then
-                stopRevenge("被关闭")
-                break
-            end
-            -- ... 这里放入你之前写的【追踪/传送/击杀判断/视角锁定/死亡计数】逻辑
-            -- (直接复制你上面的复仇循环即可)
-        end
-    end)
-end
-
-function startCrossServerChase(targetName)
-    if isChaseRunning then return end
-    isChaseRunning = true
-    
-    task.spawn(function()
-        while Flags.crossServerChase and targetName ~= "" do
-            local targetPlayer = Players:FindFirstChild(targetName)
-            
-            if targetPlayer then
-                -- 玩家在当前服务器
-                print("[追杀] 目标在当前服务器！")
-                executeAutoRevenge(targetPlayer)
-                break -- 退出循环，由复仇逻辑接管
-            else
-                -- 玩家不在当前服务器，发送加入请求
-                print("[追杀] 目标不在当前服，正在尝试加入...")
-                local userId = nil
-                pcall(function() userId = Players:GetUserIdFromNameAsync(targetName) end)
-                if userId and FireServer then
-                    FireServer("joinServer", userId)
-                end
-                task.wait(3) -- 每 3 秒发送一次
-            end
-        end
-        isChaseRunning = false
-    end)
-end
-
--- ============================================================
--- 监听被杀事件 (触发复仇 & 记录仇恨列表 & 触发跨服)
--- ============================================================
-local killMessageEvent = ReplicatedStorage.devv.remoteStorage:FindFirstChild("killMessage")
-if killMessageEvent then
-    killMessageEvent.OnClientEvent:Connect(function(killerName, weaponName, distance)
-        if killerName == LocalPlayer.Name then return end
-        
-        -- 1. 记录到仇恨列表
-        addHatePlayer(killerName)
-        
-        -- 2. 检查是否是被指定跨服目标击杀
-        if Flags.crossServerChase and currentChaseTarget == killerName then
-            local killer = Players:FindFirstChild(killerName)
-            if killer then executeAutoRevenge(killer) end
-            return
-        end
-        
-        -- 3. 普通自动复仇判断
-        if Flags.autoRevenge then
-            local killer = Players:FindFirstChild(killerName)
-            if killer then executeAutoRevenge(killer) end
-        end
-    end)
-end
-
--- 启动时读取配置
-task.spawn(loadChaseConfigOnStart)
-
--- ============================================================
 -- 【核心修改】购买逻辑（Moon 版：传送 + 连点 3 次 + 瞬回）
 -- ============================================================
 
@@ -2594,44 +2390,42 @@ ohioVcSection:Button("加入 VC 服务器", function()
 end)
 
 -- ============================================================
--- Tab: 跨服追杀
+-- UI: 跨服追杀 Tab
 -- ============================================================
 local ChaseTab = window:Tab("跨服追杀")
 local chaseSection = ChaseTab:section("目标设置", true)
 
-local hatePlayers = {"无"} -- 记录打死自己的玩家
-local chaseTargetName = ""
+local hatePlayers = {"无"} 
+local chaseTargetName = "" -- 当前选中的目标
 
--- 仇恨玩家下拉框
 local hateDropdown = chaseSection:Dropdown("仇恨玩家", "hateList", hatePlayers, function(value)
     if value ~= "无" then
         chaseTargetName = value
+        Flags.crossServerChase = true
+        if startCrossServerChase then startCrossServerChase(value) end
     end
 end)
 
--- 输入框（与 Ohio 一致）
-local chaseInput = chaseSection:Textbox("输入玩家名", "chaseInput", "输入名字或ID", function(text)
-    if text ~= "输入名字或ID" then
+chaseSection:Textbox("输入玩家名", "chaseInput", "输入名字或ID", function(text)
+    if text ~= "输入名字或ID" and text ~= "" then
         chaseTargetName = text
-    else
-        chaseTargetName = ""
+        Flags.crossServerChase = true
+        if startCrossServerChase then startCrossServerChase(text) end
     end
 end)
 
--- 跨服追杀开关
 chaseSection:Toggle("开启跨服追杀", "autoChase", false, function(state)
     Flags.crossServerChase = state
     if state then
         if chaseTargetName == "" or chaseTargetName == "无" then
-            -- 提示没填目标
             StarterGui:SetCore("SendNotification", {Title="跨服追杀", Text="请先选择或输入目标玩家", Duration=3})
             Flags.crossServerChase = false
             return
         end
-        -- 记录到文件
-        saveChaseTargetToFile(chaseTargetName)
-        -- 启动追杀逻辑
-        startCrossServerChase(chaseTargetName)
+        if saveChaseTargetToFile then saveChaseTargetToFile(chaseTargetName) end
+        if startCrossServerChase then startCrossServerChase(chaseTargetName) end
+    else
+        if clearChaseTargetFile then clearChaseTargetFile() end
     end
 end)
 
@@ -2655,83 +2449,299 @@ aboutSection:Label("脚本名称：QELua v3")
 aboutSection:Label("版本：v0.5.4.3")
 aboutSection:Label("作者：匿名")
 
--- 智能制作战斧（有Tomahawk后永久只制作不领取）
-local craftRunning = true
-local craftConnection = nil
-local hasEverHadTomahawk = false
+-- ============================================================
+-- 核心：跨服追杀 & 复仇 & 文件持久化
+-- ============================================================
+local StarterGui = game:GetService("StarterGui")
 
-local function hasTomahawk()
-    for _, item in pairs(inventory.items) do
-        if item.name == "Tomahawk" then
-            return true
-        end
+-- 文件路径配置
+local CONFIG_PATH = "autoexec/QELua_ChaseConfig.txt"
+local AUTOLOAD_PATH = "Autoexec/QELua_AutoLoad.lua"
+local SCRIPT_URL = "https://raw.githubusercontent.com/qwe20758/QWEHub/refs/heads/main/QELuaV3.lua"
+
+local hatePlayersList = {}
+local currentChaseTarget = nil
+local isChaseRunning = false
+local globalIsRevengeActive = false
+local globalRevengeTarget = nil
+local globalRevengeKillCount = 0
+local globalIsTargetDead = false
+local globalDeathTime = 0
+
+-- 状态保存
+local originalTpWalk = false
+local originalHitMOD = "meleemegapunch"
+local originalAutoStomp = false
+local originalWeaponType = "Brass Knuckles"
+local originalAutoEquip = false
+local savedCameraSubject = nil
+local savedCameraType = nil
+
+-- ============================================================
+-- 文件与 Autoexec 操作
+-- ============================================================
+function saveChaseTargetToFile(name)
+    if writefile then
+        pcall(function()
+            -- 1. 写入目标名称
+            writefile(CONFIG_PATH, name)
+            -- 2. 将自己写入 autoexec，使用给定的 URL
+            local loaderContent = string.format("loadstring(game:HttpGet('%s'))()", SCRIPT_URL)
+            writefile(AUTOLOAD_PATH, loaderContent)
+            print("[跨服追杀] 已写入 autoexec 和 配置文件")
+        end)
     end
-    return false
 end
 
-craftConnection = RunService.Heartbeat:Connect(function()
-    if not craftRunning then
-        craftConnection:Disconnect()
-        craftConnection = nil
-        return
+function clearChaseTargetFile()
+    if delfile and isfile and isfile(CONFIG_PATH) then
+        pcall(delfile, CONFIG_PATH)
+        print("[跨服追杀] 已删除配置文件")
     end
-    pcall(function()
-        Signal.InvokeServer("beginCraft", 'TomahawkCraft')
-        if not hasEverHadTomahawk then
-            if hasTomahawk() then
-                hasEverHadTomahawk = true
+end
+
+-- ============================================================
+-- 停止复仇
+-- ============================================================
+local function stopRevenge(reason)
+    if globalIsRevengeActive then
+        print("[复仇系统] 停止复仇: " .. tostring(reason))
+        globalIsRevengeActive = false
+        globalRevengeTarget = nil
+        globalRevengeKillCount = 0
+        globalIsTargetDead = false
+        
+        Flags.killAura = false
+        Flags.autoStomp = originalAutoStomp 
+        Flags.tpEnabled = originalTpWalk
+        Flags.hitMOD = originalHitMOD
+        Flags.weaponType = originalWeaponType
+        Flags.autoEquip = originalAutoEquip
+        
+        local cam = workspace.CurrentCamera
+        if cam then
+            local myChar = LocalPlayer.Character
+            local myHum = myChar and myChar:FindFirstChildOfClass("Humanoid")
+            if myHum then
+                cam.CameraSubject = myHum
+                cam.CameraType = Enum.CameraType.Custom
+            elseif savedCameraSubject then
+                cam.CameraSubject = savedCameraSubject
+                cam.CameraType = savedCameraType or Enum.CameraType.Custom
+            end
+        end
+        savedCameraSubject = nil
+        savedCameraType = nil
+    end
+end
+
+-- ============================================================
+-- 执行自动反击（完整逻辑）
+-- ============================================================
+function executeAutoRevenge(targetPlayer)
+    if globalIsRevengeActive then stopRevenge("切换新目标") task.wait(0.1) end
+    
+    originalTpWalk = Flags.tpEnabled
+    originalHitMOD = Flags.hitMOD
+    originalAutoStomp = Flags.autoStomp
+    originalWeaponType = Flags.weaponType
+    originalAutoEquip = Flags.autoEquip
+    
+    local cam = workspace.CurrentCamera
+    if cam then
+        savedCameraSubject = cam.CameraSubject
+        savedCameraType = cam.CameraType
+    end
+    
+    globalRevengeTarget = targetPlayer
+    globalRevengeKillCount = 0
+    globalIsTargetDead = false
+    globalIsRevengeActive = true
+    
+    Flags.hitMOD = "meleemegapunch" 
+    Flags.killAura = true
+    Flags.autoStomp = true
+    Flags.tpEnabled = true
+    Flags.weaponType = "Fists"
+    Flags.autoEquip = true
+    
+    task.spawn(function()
+        while globalIsRevengeActive and globalRevengeTarget do
+            task.wait(0.05)
+            
+            if not Flags.autoRevenge and not Flags.crossServerChase then
+                stopRevenge("开关被关闭")
+                break
+            end
+            
+            local char = LocalPlayer.Character
+            local targetChar = globalRevengeTarget.Character
+            local targetHum = targetChar and targetChar:FindFirstChildOfClass("Humanoid")
+            
+            if not targetHum or targetHum.Health <= 0 then
+                if not globalIsTargetDead then
+                    globalIsTargetDead = true
+                    globalRevengeKillCount = globalRevengeKillCount + 1
+                    globalDeathTime = tick()
+                    print("[复仇系统] 已击杀目标 " .. globalRevengeKillCount .. " 次。")
+                    
+                    local needed = Flags.killCountRequired or 2
+                    if globalRevengeKillCount >= needed then
+                        stopRevenge("已击杀目标 " .. needed .. " 次，复仇完成")
+                        break
+                    else
+                        print("[复仇系统] 等待目标复活...")
+                    end
+                else
+                    if tick() - globalDeathTime > 15 or not globalRevengeTarget.Parent then
+                        stopRevenge("目标未复活或已退出")
+                        break
+                    end
+                end
             else
-                Signal.InvokeServer("claimCraft", 'TomahawkCraft')
+                if globalIsTargetDead then
+                    globalIsTargetDead = false
+                    print("[复仇系统] 目标已复活，继续追杀...")
+                end
+                
+                if cam then
+                    cam.CameraSubject = targetHum
+                    cam.CameraType = Enum.CameraType.Custom
+                end
+                
+                if char and char:FindFirstChild("HumanoidRootPart") and targetChar:FindFirstChild("HumanoidRootPart") then
+                    local targetRoot = targetChar.HumanoidRootPart
+                    char.HumanoidRootPart.CFrame = CFrame.new(targetRoot.Position - Vector3.new(0, 10, 0))
+                end
             end
         end
     end)
-end)
+end
 
-task.spawn(function()
-    while craftRunning and task.wait(0.15) do
-        pcall(function()
-            Signal.InvokeServer("beginCraft", 'TomahawkCraft')
-            if not hasEverHadTomahawk then
-                if hasTomahawk() then
-                    hasEverHadTomahawk = true
-                else
-                    Signal.InvokeServer("claimCraft", 'TomahawkCraft')
+-- ============================================================
+-- 跨服轮询逻辑
+-- ============================================================
+function startCrossServerChase(targetName)
+    if isChaseRunning then return end
+    isChaseRunning = true
+    currentChaseTarget = targetName
+    
+    task.spawn(function()
+        while Flags.crossServerChase and targetName ~= "" do
+            local targetPlayer = Players:FindFirstChild(targetName)
+            
+            if targetPlayer then
+                -- 玩家在当前服务器，触发自动反击
+                print("[跨服追杀] 目标在当前服务器，触发自动反击！")
+                executeAutoRevenge(targetPlayer)
+                break
+            else
+                -- 发送加入请求，每 3 秒一次
+                print("[跨服追杀] 目标不在当前服，正在尝试加入...")
+                local userId = nil
+                pcall(function() userId = Players:GetUserIdFromNameAsync(targetName) end)
+                if userId and FireServer then
+                    FireServer("joinServer", userId)
                 end
+                task.wait(3)
             end
-        end)
-    end
-end)
-
--- 停止：craftRunning = false
-
-local DisassembleEvent = ReplicatedStorage:FindFirstChild("devv")
-if DisassembleEvent then
-    DisassembleEvent = DisassembleEvent:FindFirstChild("remoteStorage")
-    if DisassembleEvent then
-        DisassembleEvent = DisassembleEvent:FindFirstChild("craftingDisassemble")
-    end
-end
-
-if not DisassembleEvent then return end
-
-local function getM1911Guid()
-    if not inventory or not inventory.items then return nil end
-    for guid, data in pairs(inventory.items) do
-        if data.name == "M1911" then
-            return guid
         end
-    end
-    return nil
+        isChaseRunning = false
+    end)
 end
 
-task.spawn(function()
-    while true do
-        pcall(function()
-            local guid = getM1911Guid()
-            if guid then
-                DisassembleEvent:InvokeServer({ [guid] = 1 })
+-- ============================================================
+-- 监听被杀事件 (更新仇恨列表 & 触发)
+-- ============================================================
+local killMessageEvent = ReplicatedStorage.devv.remoteStorage:FindFirstChild("killMessage")
+if killMessageEvent then
+    killMessageEvent.OnClientEvent:Connect(function(killerName, weaponName, distance)
+        if killerName == LocalPlayer.Name then return end
+        
+        -- 1. 更新仇恨列表
+        if not table.find(hatePlayersList, killerName) then
+            table.insert(hatePlayersList, killerName)
+            if hateDropdown then
+                local listCopy = {unpack(hatePlayersList)}
+                table.insert(listCopy, 1, "无")
+                hateDropdown:SetOptions(listCopy)
             end
-        end)
-        task.wait(0.5)
+        end
+        
+        -- 2. 如果开启跨服追杀且正是目标
+        if Flags.crossServerChase and currentChaseTarget == killerName then
+            executeAutoRevenge(Players:FindFirstChild(killerName))
+            return
+        end
+        
+        -- 3. 普通自动反击
+        if Flags.autoRevenge then
+            local killer = Players:FindFirstChild(killerName)
+            if killer then executeAutoRevenge(killer) end
+        end
+    end)
+end
+
+-- ============================================================
+-- 启动时读取配置并弹窗
+-- ============================================================
+task.spawn(function()
+    task.wait(2) -- 等待游戏和UI加载
+    if isfile and isfile(CONFIG_PATH) then
+        local savedTarget = readfile(CONFIG_PATH)
+        if savedTarget and savedTarget ~= "" then
+            
+            local gui = Instance.new("ScreenGui")
+            gui.Name = "QELua_ChasePrompt"
+            gui.ResetOnSpawn = false
+            gui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+            
+            local frame = Instance.new("Frame")
+            frame.Size = UDim2.new(0, 320, 0, 140)
+            frame.Position = UDim2.new(0.5, -160, 0.5, -70)
+            frame.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+            frame.Parent = gui
+            Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
+            
+            local label = Instance.new("TextLabel")
+            label.Size = UDim2.new(1, -20, 0, 60)
+            label.Position = UDim2.new(0, 10, 0, 10)
+            label.BackgroundTransparency = 1
+            label.Text = "检测到正在进行跨服追杀：\n" .. savedTarget .. "\n是否停止追杀该玩家？"
+            label.TextColor3 = Color3.fromRGB(255, 255, 255)
+            label.TextSize = 14
+            label.Parent = frame
+            
+            local btnStop = Instance.new("TextButton")
+            btnStop.Size = UDim2.new(0, 130, 0, 32)
+            btnStop.Position = UDim2.new(0, 15, 1, -45)
+            btnStop.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+            btnStop.Text = "停止并删除配置"
+            btnStop.TextColor3 = Color3.fromRGB(255, 255, 255)
+            btnStop.Parent = frame
+            Instance.new("UICorner", btnStop).CornerRadius = UDim.new(0, 6)
+            
+            local btnContinue = Instance.new("TextButton")
+            btnContinue.Size = UDim2.new(0, 130, 0, 32)
+            btnContinue.Position = UDim2.new(0, 160, 1, -45)
+            btnContinue.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
+            btnContinue.Text = "继续追杀"
+            btnContinue.TextColor3 = Color3.fromRGB(255, 255, 255)
+            btnContinue.Parent = frame
+            Instance.new("UICorner", btnContinue).CornerRadius = UDim.new(0, 6)
+            
+            btnStop.MouseButton1Click:Connect(function()
+                clearChaseTargetFile()
+                Flags.crossServerChase = false
+                gui:Destroy()
+            end)
+            
+            btnContinue.MouseButton1Click:Connect(function()
+                chaseTargetName = savedTarget
+                Flags.crossServerChase = true
+                startCrossServerChase(savedTarget)
+                gui:Destroy()
+            end)
+        end
     end
 end)
